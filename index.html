@@ -573,23 +573,39 @@ input::placeholder { color: var(--text3); }
 
   <!-- ===== الصوبة ===== -->
   <div id="pg-gh" class="pg">
-    <div class="card">
+
+    <a class="sheet-link" href="https://docs.google.com/spreadsheets/d/14lrqAV6EovnglC08cd-5pPcvk1xjQd6ytFzMAlkTU0Q" target="_blank">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      فتح Google Sheet
+    </a>
+
+    <!-- جدول الصغير -->
+    <div class="card" style="margin-bottom:14px">
       <div class="card-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-        خريطة الصوبة
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+        القسم الصغير — الزراعة الحالية
       </div>
       <div class="legend">
         <div class="leg"><div class="leg-dot" style="background:var(--surface2)"></div>فاضية</div>
-        <div class="leg"><div class="leg-dot" style="background:var(--green-pale);border-color:var(--green-border)"></div>صغير فقط</div>
-        <div class="leg"><div class="leg-dot" style="background:var(--blue-pale);border-color:var(--blue-border)"></div>صغير + كبير</div>
-        <div class="leg"><div class="leg-dot" style="background:var(--amber-pale);border-color:var(--amber-border)"></div>جاهزة للحصاد</div>
+        <div class="leg"><div class="leg-dot" style="background:var(--green-pale);border-color:var(--green-border)"></div>مزروعة</div>
       </div>
-      <a class="sheet-link" href="https://docs.google.com/spreadsheets/d/14lrqAV6EovnglC08cd-5pPcvk1xjQd6ytFzMAlkTU0Q" target="_blank">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-        فتح Google Sheet
-      </a>
-      <div class="gh-scroll"><div id="gh-inner"></div></div>
+      <div class="gh-scroll"><div id="gh-small"></div></div>
     </div>
+
+    <!-- جدول الكبير -->
+    <div class="card">
+      <div class="card-title">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+        القسم الكبير — المنقول للتكبير
+      </div>
+      <div class="legend">
+        <div class="leg"><div class="leg-dot" style="background:var(--surface2)"></div>فاضية</div>
+        <div class="leg"><div class="leg-dot" style="background:var(--blue-pale);border-color:var(--blue-border)"></div>فيها منتج</div>
+        <div class="leg"><div class="leg-dot" style="background:var(--amber-pale);border-color:var(--amber-border)"></div>جاهزة للحصاد (+21 يوم)</div>
+      </div>
+      <div class="gh-scroll"><div id="gh-big"></div></div>
+    </div>
+
   </div>
 
 </div>
@@ -725,15 +741,61 @@ function renderLog(filter){
     </div>`).join('');
 }
 
-function renderGH(){
+function buildState(){
+  /*
+    لكل ترابيزة نتتبع:
+    sm: { counts: {crop: n}, firstDate }   — مجموع المزروع في الصغير
+    bg: { counts: {crop: n}, firstDate }   — مجموع المنقول للكبير
+
+    زراعة   → يُضاف للصغير
+    نقل     → يُخصم من الصغير بالكمية المنقولة، يُضاف للكبير
+    حصاد    → يُخصم من الكبير بالكمية المحصودة
+    لو المجموع وصل صفر أو أقل → القسم فاضي
+  */
   const state = {};
+  const init = () => ({ counts:{}, firstDate: null, totalCount: 0 });
+
   [...recs].reverse().forEach(r => {
-    if(!state[r.code]) state[r.code] = {sm:null, bg:null, bgDate:null};
+    if(!state[r.code]) state[r.code] = { sm: init(), bg: init() };
     const s = state[r.code];
-    if(r.op === 'z'){ s.sm = r.crop; }
-    if(r.op === 'n'){ s.bg = r.crop; s.sm = null; s.bgDate = r.date; }
-    if(r.op === 'h'){ s.bg = null; s.bgDate = null; }
+    const cnt = parseInt(r.count) || 0;
+    const crop = r.crop;
+
+    if(r.op === 'z'){
+      s.sm.counts[crop] = (s.sm.counts[crop] || 0) + cnt;
+      s.sm.totalCount += cnt;
+      if(!s.sm.firstDate) s.sm.firstDate = r.date;
+    }
+    if(r.op === 'n'){
+      // خصم من الصغير
+      s.sm.counts[crop] = (s.sm.counts[crop] || 0) - cnt;
+      s.sm.totalCount -= cnt;
+      if(s.sm.counts[crop] <= 0) delete s.sm.counts[crop];
+      if(s.sm.totalCount <= 0){ s.sm = init(); }
+      // إضافة للكبير
+      s.bg.counts[crop] = (s.bg.counts[crop] || 0) + cnt;
+      s.bg.totalCount += cnt;
+      if(!s.bg.firstDate) s.bg.firstDate = r.date;
+    }
+    if(r.op === 'h'){
+      // خصم من الكبير
+      s.bg.counts[crop] = (s.bg.counts[crop] || 0) - cnt;
+      s.bg.totalCount -= cnt;
+      if(s.bg.counts[crop] <= 0) delete s.bg.counts[crop];
+      if(s.bg.totalCount <= 0){ s.bg = init(); }
+    }
   });
+  return state;
+}
+
+function partLabel(part){
+  // يعرض الأصناف والكميات — مثلاً "باتافيا 76"
+  return Object.entries(part.counts)
+    .map(([crop, n]) => `${crop} ${n}`)
+    .join('<br>');
+}
+
+function makeTable(stateMap, section){
   const now = new Date();
   let html = '<table class="gh-table"><thead><tr><th></th>';
   for(let c=1;c<=17;c++) html += `<th class="gh-th">${c}</th>`;
@@ -742,27 +804,45 @@ function renderGH(){
     html += `<tr><td class="gh-rh">${row}</td>`;
     for(let c=1;c<=17;c++){
       const k = `${row}-${c}`;
-      const s = state[k];
+      const s = stateMap[k];
+      const part = s ? s[section] : null;
+      const hasPlants = part && part.totalCount > 0;
       let cls = '', cv = '';
-      if(s){
-        const aged = s.bgDate && ((now - new Date(s.bgDate)) / 86400000 >= 21);
-        if(aged){ cls = 'rd'; cv = s.bg || ''; }
-        else if(s.sm && s.bg){ cls = 'bo'; cv = s.sm + '<br>' + s.bg; }
-        else if(s.sm){ cls = 'sm'; cv = s.sm; }
-        else if(s.bg){ cls = 'bo'; cv = s.bg; }
+      if(hasPlants){
+        if(section === 'bg'){
+          const days = part.firstDate ? (now - new Date(part.firstDate)) / 86400000 : 0;
+          cls = days >= 21 ? 'rd' : 'bo';
+        } else {
+          cls = 'sm';
+        }
+        cv = partLabel(part);
       }
-      html += `<td class="gh-cell ${cls}" onclick="cellInfo('${k}')"><span class="cc">${k}</span><span class="cv">${cv}</span></td>`;
+      html += `<td class="gh-cell ${cls}" onclick="cellInfoSec('${k}','${section}')"><span class="cc">${k}</span><span class="cv">${cv}</span></td>`;
     }
     html += '</tr>';
   });
   html += '</tbody></table>';
-  document.getElementById('gh-inner').innerHTML = html;
+  return html;
 }
 
-function cellInfo(code){
-  const r = recs.find(x => x.code === code);
-  if(!r){ showToast(code + ' — فاضية'); return; }
-  showToast(`${code} · ${OPN[r.op]} · ${r.crop} · ${r.count} نبات`);
+function renderGH(){
+  const state = buildState();
+  document.getElementById('gh-small').innerHTML = makeTable(state, 'sm');
+  document.getElementById('gh-big').innerHTML   = makeTable(state, 'bg');
+}
+
+function cellInfoSec(code, section){
+  const state = buildState();
+  const s = state[code];
+  const part = s ? s[section] : null;
+  const secName = section === 'sm' ? 'صغير' : 'كبير';
+  const hasPlants = part && part.totalCount > 0;
+  if(!hasPlants){ showToast(`${code} (${secName}) — فاضية`); return; }
+  const crops = Object.entries(part.counts).map(([c,n]) => `${c}: ${n}`).join(' | ');
+  const days = section === 'bg' && part.firstDate
+    ? ` · ${Math.floor((new Date() - new Date(part.firstDate)) / 86400000)} يوم`
+    : '';
+  showToast(`${code} (${secName}) · ${crops} · إجمالي ${part.totalCount}${days}`);
 }
 
 function updStats(){
